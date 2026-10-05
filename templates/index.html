@@ -1,0 +1,1611 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Учет и расчет мощностей серверов</title>
+   <style>
+      :root {
+        --app-bg: #0b1626;
+        --bar: #16233a;
+        --khaki: #223354;
+        --khaki-light: #1c2c48;
+        --line: #2c4160;
+        --line-soft: #253a57;
+        --text: #eef2fa;
+        --text-muted: #94a3bf;
+        --sel: #3f66c9;
+        --hover: #27406b;
+        --primary: #2c4aa8;
+        --primary-dark: #1f3a8a;
+        --danger: #b0261e;
+        --accent: #2d7a2d;
+        --warn: #b7791f;
+        --surface: #16233a;
+        --surface-alt: #101b2d;
+        --border: #2c3850;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; }
+
+      body {
+        font-family: Tahoma, "Segoe UI", Arial, sans-serif;
+        font-size: 13px;
+        color: var(--text);
+        background:
+          radial-gradient(ellipse at center, #0a1f33 0%, #07182b 25%, #061220 50%, #050d19 75%, #040a14 100%),
+          linear-gradient(135deg, #0e2a47 0%, #0b2340 100%);
+        background-blend-mode: overlay;
+        background-attachment: fixed;
+      }
+
+      body::before {
+        content: ""; position: fixed; inset: 0;
+        background:
+          radial-gradient(circle at 20% 80%, rgba(14,42,71,0.35) 0%, transparent 50%),
+          radial-gradient(circle at 80% 20%, rgba(11,35,64,0.35) 0%, transparent 50%),
+          radial-gradient(circle at 40% 40%, rgba(6,18,32,0.45) 0%, transparent 50%);
+        pointer-events: none; z-index: -1;
+      }
+
+      .page { min-height: 100vh; display: flex; flex-direction: column; background: var(--app-bg); }
+      .content { display: flex; flex-direction: column; flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--line); box-shadow: 1px 1px 0 rgba(0,0,0,0.05); }
+      .table-wrap { flex: 1; overflow-x: visible; }
+
+      /* --- Заголовок окна, строка итогов, панели команд --- */
+      .titlebar {
+        background: linear-gradient(#1c2c48, var(--bar));
+        color: var(--text);
+        padding: 5px 12px;
+        font-size: 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .statsbar {
+        display: flex; flex-wrap: wrap; gap: 26px;
+        background: #101b2d;
+        color: var(--text);
+        padding: 4px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .statsbar b { color: #fff; }
+
+      .flash { padding: 5px 12px; border-bottom: 1px solid; }
+      .flash.success { background: #123524; color: #8fe0ad; border-color: #1f5c3b; }
+      .flash.error { background: #3a1b18; color: #f0a39c; border-color: #6b2b26; }
+
+      .toolbar {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+        background: var(--bar);
+        border-bottom: 1px solid var(--line);
+        padding: 5px 8px;
+      }
+      .toolbar-left { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+      .tb-sep { display: inline-block; width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+
+      /* --- Рабочая область: слева режимы просмотра и столбцы, справа таблица --- */
+      .workspace { display: flex; align-items: flex-start; gap: 8px; padding: 8px; flex: 1; }
+      .sidebar { flex: 0 0 210px; background: var(--surface); border: 1px solid var(--line); box-shadow: 1px 1px 0 rgba(0,0,0,0.05); }
+      .sidebar-head {
+        background: linear-gradient(#efe9c9, var(--khaki)); font-weight: bold; color: var(--text);
+        padding: 5px 9px; border-bottom: 1px solid var(--line);
+      }
+      .sidebar .tab-btn {
+        display: block; width: 100%; text-align: left;
+        background: transparent; color: var(--text);
+        border: 0; border-radius: 0;
+        padding: 6px 10px 6px 26px; font: inherit; cursor: pointer; position: relative;
+      }
+      .sidebar .tab-btn::before {
+        content: ""; position: absolute; left: 9px; top: 50%;
+        width: 9px; height: 9px; margin-top: -5px;
+        border: 1px solid #5c76a3; background: #2a4066;
+      }
+      .sidebar .tab-btn:hover { background: var(--hover); }
+      .sidebar .tab-btn.active { background: var(--sel); color: #fff; }
+      .sidebar-columns { padding: 6px 10px 10px; color: var(--text); }
+      .sidebar-columns .checkbox-item { padding: 3px 0; font-size: 12.5px; }
+
+      .statusbar {
+        display: flex; justify-content: space-between; align-items: center;
+        background: var(--bar); border-top: 1px solid var(--line);
+        padding: 4px 10px; font-size: 12px; color: var(--text-muted);
+      }
+      .statusbar .bg-toggle-link {
+        background: none; border: 0; padding: 0; font: inherit; color: #8fb4f5;
+        text-decoration: underline; cursor: pointer;
+      }
+      .statusbar .bg-toggle-link:hover { color: #fff; }
+
+      /* --- Кнопки --- */
+      .btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+        min-height: 24px; padding: 3px 10px;
+        font: inherit; color: var(--text); text-decoration: none; white-space: nowrap;
+        background: linear-gradient(#24344f, #192536); border: 1px solid #3a567f; border-radius: 2px; cursor: pointer;
+      }
+      .btn:hover { background: linear-gradient(#2d4567, #1e2f4a); border-color: #5c8ae0; }
+      .btn:active { background: #16233a; }
+      .btn-sm { min-height: 22px; padding: 2px 8px; font-size: 12.5px; }
+      .btn-primary { background: linear-gradient(#2a4066, #1b2b48); border-color: #4f72c7; }
+      .btn-primary:hover { background: linear-gradient(#32507f, #223a5e); }
+      .btn-accent { background: linear-gradient(#1d4530, #15301f); border-color: #3f8a5c; color: #bdf0ce; font-weight: bold; }
+      .btn-accent:hover { background: linear-gradient(#245a38, #1a3a26); }
+      .btn-danger { color: #f0a39c; border-color: #6b3530; }
+      .btn-ghost { }
+
+      .comment-btn {
+        display: inline-flex; align-items: center; gap: 4px;
+        font: inherit; font-size: 12px; color: var(--text);
+        background: var(--surface-alt); border: 1px solid #3a567f; border-radius: 2px;
+        padding: 1px 8px; cursor: pointer;
+      }
+      .comment-btn:hover { border-color: #5c8ae0; }
+      .count {
+        display: inline-block; min-width: 16px; padding: 0 4px; margin-left: 2px;
+        background: var(--danger); color: #fff; font-size: 11px; text-align: center; border-radius: 2px;
+      }
+      .count.zero { background: #a9a698; }
+      .link-btn { background: none; border: 0; padding: 0; font: inherit; color: #8fb4f5; text-decoration: underline; cursor: pointer; }
+      .link-btn:hover { color: #fff; }
+
+      /* --- Поля ввода --- */
+      input[type="text"], input[type="number"], select, textarea {
+        width: 100%; padding: 3px 6px; font: inherit; color: var(--text);
+        background: var(--surface-alt); border: 1px solid #3a567f; border-radius: 0;
+      }
+      input[type="file"] { font: inherit; background: var(--surface-alt); color: var(--text); border-color: #3a567f; }
+      input:focus, select:focus, textarea:focus { outline: none; border-color: #5c8ae0; background: #132033; }
+      ::placeholder { color: #5c6f8f; }
+      .search-box { flex: 0 0 300px; }
+
+      .form-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px 10px; }
+      .form-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+      .form-grid .full { grid-column: 1 / -1; }
+      .field label, .form-grid label { display: block; font-size: 12px; color: var(--text); margin-bottom: 2px; }
+
+      .checkbox-box { border: 1px solid #8f8a70; background: var(--surface); max-height: 140px; overflow-y: auto; padding: 4px 8px; }
+      .checkbox-item { display: block; padding: 2px 0; cursor: pointer; }
+      .checkbox-item input { width: auto; margin-right: 6px; }
+
+      .multiselect { position: relative; }
+      .multiselect-toggle {
+        width: 100%; display: flex; justify-content: space-between; align-items: center;
+        padding: 3px 6px; font: inherit; color: var(--text);
+        background: var(--surface); border: 1px solid #8f8a70; cursor: pointer; text-align: left;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .multiselect-toggle:hover { border-color: #3a55b5; }
+      .multiselect-toggle .ms-caret { color: var(--text-muted); font-size: 10px; margin-left: 8px; }
+      .multiselect-panel {
+        display: none; position: absolute; top: calc(100% + 2px); left: 0;
+        min-width: 240px; max-width: 340px; max-height: 260px; overflow-y: auto;
+        background: var(--surface); border: 1px solid #6d6a58; padding: 4px 8px;
+        box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.2); z-index: 60;
+      }
+      .multiselect-panel.open { display: block; }
+
+      /* --- Таблица --- */
+      table { width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: fixed; }
+      thead th {
+        background: var(--khaki-light); color: var(--text); font-weight: bold; text-align: left;
+        padding: 5px 6px; border: 1px solid var(--line-soft);
+        position: sticky; top: 0; word-break: break-word;
+      }
+      thead th a { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+      thead th a:hover { color: #fff; }
+      thead th.active { background: #223a5e; }
+      tbody td { padding: 4px 6px; border: 1px solid var(--line-soft); vertical-align: middle; word-break: break-word; color: var(--text); }
+      tbody tr:nth-child(even) { background: rgba(255,255,255,0.025); }
+      tbody tr:hover { background: var(--hover); }
+      tbody tr.hidden-row { display: none; }
+      .row-actions { display: flex; flex-direction: column; gap: 3px; align-items: stretch; }
+      .row-actions .btn { justify-content: center; }
+
+      code.ip { font-family: Consolas, "Courier New", monospace; font-size: 12px; word-break: break-all; color: var(--text); background: rgba(255,255,255,0.07); }
+      .badge { display: inline; padding: 1px 5px; font-size: 12px; line-height: 1.6; border: 1px solid var(--line); background: rgba(255,255,255,0.08); color: var(--text); }
+      .badge.blue { background: rgba(63,102,201,0.25); border-color: #3f66c9; color: #c3d4f7; }
+      .badge.green { background: rgba(60,150,90,0.25); border-color: #3f8a5c; color: #b4e8c4; }
+      .badge.amber { background: rgba(201,150,50,0.25); border-color: #c99632; color: #f3d99a; }
+
+      /* Группированный вид */
+      .grouped-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+      .grouped-table thead th { position: static; background: var(--khaki-light); color: var(--text); }
+      .grouped-table tbody td { border-color: var(--line-soft); }
+      .grouped-table .group-cell {
+        font-weight: bold; text-align: center; color: #10192a; background: var(--group-color);
+        vertical-align: middle;
+      }
+      .grouped-table .subgroup-cell { font-weight: bold; background: var(--bar); color: var(--text); vertical-align: middle; }
+
+      /* --- Окна --- */
+      .modal-overlay {
+        display: none; position: fixed; inset: 0; background: rgba(60, 55, 30, 0.35);
+        align-items: center; justify-content: center; z-index: 1000; padding: 20px;
+      }
+      .modal-overlay.open { display: flex; }
+      .modal {
+        background: var(--surface); border: 1px solid #6d6a58; width: 100%; max-width: 560px;
+        max-height: 88vh; display: flex; flex-direction: column;
+        box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.15), 0 18px 45px rgba(0, 0, 0, 0.3);
+      }
+      .modal-head {
+        background: linear-gradient(#1c2c48, var(--bar)); border-bottom: 1px solid var(--line);
+        padding: 5px 9px; display: flex; justify-content: space-between; align-items: center; color: var(--text);
+      }
+      .modal-head h3 { margin: 0; font-size: 13px; font-weight: bold; }
+      .modal-head button { background: none; border: 0; font-size: 18px; line-height: 1; padding: 0 6px; cursor: pointer; color: var(--text); }
+      .modal-head button:hover { background: #c33; color: #fff; }
+      .modal-body { padding: 12px; overflow-y: auto; }
+      .modal-footer { padding: 8px 12px; border-top: 1px solid var(--line); background: var(--bar); }
+      .modal-footer textarea { min-height: 56px; resize: vertical; margin-bottom: 6px; }
+      .modal-footer .row { display: flex; gap: 6px; }
+      .modal-footer input[type=text] { max-width: 160px; }
+      .modal-footer select { flex: 1; }
+
+      .comment-item { border-bottom: 1px solid var(--line-soft); padding: 6px 0; }
+      .comment-item:last-child { border-bottom: 0; }
+      .comment-item .meta { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--text-muted); margin-bottom: 2px; }
+      .comment-item .meta strong { color: var(--text); }
+      .comment-item p { margin: 0; white-space: pre-wrap; }
+      .comment-item .del-comment { background: none; border: 0; color: var(--danger); cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; text-decoration: underline; }
+      .no-comments { color: var(--text-muted); text-align: center; padding: 14px 0; }
+
+      /* --- Справочники, привязки --- */
+      .ref-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+      .ref-box { border: 1px solid var(--line); background: var(--surface-alt); padding: 0 0 8px; }
+      .ref-box h4 { margin: 0 0 6px; padding: 4px 8px; background: var(--bar); color: var(--text); font-size: 12.5px; }
+      .ref-list { list-style: none; margin: 0 8px 8px; padding: 0; max-height: 160px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line-soft); }
+      .ref-list li { display: flex; justify-content: space-between; align-items: center; padding: 3px 6px; }
+      .ref-list li:hover { background: var(--hover); }
+      .ref-list a.remove { color: var(--danger); text-decoration: none; font-weight: bold; padding: 0 4px; }
+      .ref-add-form { display: flex; gap: 4px; flex-wrap: wrap; margin: 0 8px; }
+      .ref-add-form input { flex: 1; min-width: 80px; }
+
+      .group-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+      .tab-btn {
+        font: inherit; color: var(--text); background: var(--surface-alt);
+        border: 1px solid #3a567f; border-radius: 0; padding: 3px 12px; cursor: pointer;
+      }
+      .tab-btn:hover { background: var(--hover); }
+      .tab-btn.active { background: var(--sel); border-color: var(--sel); color: #fff; }
+      
+      .group-layout { display: grid; grid-template-columns: 1fr 1.3fr; gap: 12px; }
+      @media (max-width: 900px) { .group-layout { grid-template-columns: 1fr; } }
+      
+      .group-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--line); background: var(--surface); }
+      .group-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; cursor: pointer; border-bottom: 1px solid var(--line-soft); color: var(--text); }
+      .group-item:last-child { border-bottom: 0; }
+      .group-item:hover { background: var(--hover); }
+      .group-item.selected { background: var(--sel); color: #fff; }
+      .group-item.selected a.remove { color: #fff; }
+      .group-item a.remove { color: var(--danger); text-decoration: none; font-weight: bold; padding: 0 4px; }
+      
+      .group-detail-col h4 { margin: 0 0 6px; font-size: 13px; }
+      .group-hint { font-size: 12px; color: var(--text-muted); margin: 0 0 8px; }
+      
+      .group-server-list { border: 1px solid var(--line); background: var(--surface); max-height: 220px; overflow-y: auto; padding: 2px 8px; margin-bottom: 8px; }
+      .group-add-row { display: flex; gap: 6px; }
+      .group-add-row select { flex: 1; }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="titlebar">Система учета и расчета мощностей IT-инфраструктуры</div>
+      <div class="statsbar">
+        <span>Серверов: <b>{{ totals.total_servers }}</b></span>
+        <span>Ядер vCPU: <b>{{ totals.total_cpu }}</b></span>
+        <span>ОЗУ: <b>{{ totals.total_ram }} ГБ</b></span>
+        <span>Диск: <b>{{ totals.total_disk }} ГБ</b></span>
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash {{ 'error' if category == 'error' else 'success' }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <!-- Форма добавления сервера -->
+      <div class="modal-overlay" id="addServerModal">
+        <div class="modal" style="max-width:1180px;">
+          <div class="modal-head">
+            <h3>Добавить сервер</h3>
+            <button onclick="closeAddServerModal()">&times;</button>
+          </div>
+          <div class="modal-body">
+          <form action="/add" method="POST">
+            <div id="newRequirementRow" style="max-width:420px; margin-bottom:16px;">
+              <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-muted); margin-bottom:5px;">Новая потребность — код (если нужной ещё нет в списке ниже)</label>
+              <div style="display:flex; gap:8px;">
+                <input type="text" id="new_requirement_input" name="new_requirement_code" placeholder="Например, CAP002" style="flex:1;" />
+                <button type="button" class="btn btn-primary btn-sm" onclick="quickAddRequirement()">Добавить</button>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <div class="field">
+                <label>Имя сервера</label>
+                <input type="text" name="name" required placeholder="server01" />
+              </div>
+              <div class="field">
+                <label>IP-адрес</label>
+                <input type="text" name="ip_address" required placeholder="172.31.x.x" />
+              </div>
+              <div class="field">
+                <label>vCPU</label>
+                <input type="number" id="cpu_input" name="cpu_cores" value="8" />
+              </div>
+              <div class="field">
+                <label>RAM (ГБ)</label>
+                <input type="number" id="ram_input" name="ram_gb" value="32" />
+              </div>
+              <div class="field">
+                <label>Диск (ГБ)</label>
+                <input type="number" id="disk_input" name="disk_gb" value="500" />
+              </div>
+              <div class="field">
+                <label>Версия СУБД</label>
+                <input type="text" name="dbms_version" placeholder="14.2" />
+              </div>
+
+              <div class="field">
+                <label>Год запуска</label>
+                <input type="number" name="launch_year" min="1990" max="2100" placeholder="2024" />
+              </div>
+              <div class="field">
+                <label>ОС</label>
+                <select name="os_id">
+                  <option value="">-- выберите --</option>
+                  {% for os in os_list %}
+                  <option value="{{ os.id }}">{{ os.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="field">
+                <label>Среда</label>
+                <select name="env_id">
+                  <option value="">-- выберите --</option>
+                  {% for env in env_list %}
+                  <option value="{{ env.id }}">{{ env.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="field">
+                <label>Роль</label>
+                <select name="role_id">
+                  <option value="">-- выберите --</option>
+                  {% for role in role_list %}
+                  <option value="{{ role.id }}">{{ role.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="field">
+                <label>Код ИС (только если это новая ИС)</label>
+                <input type="text" name="new_is_code" placeholder="Код (необязательно)" />
+              </div>
+              <div class="field">
+                <label>ИС (выберите из списка или введите новую)</label>
+                <input type="text" name="is_name" list="is_datalist" placeholder="Начните вводить или выберите..." autocomplete="off" />
+                <datalist id="is_datalist">
+                  {% for isys in is_list %}<option value="{{ isys.name }}">{% endfor %}
+                </datalist>
+              </div>
+              <div class="field">
+                <label>Потребности</label>
+                <div class="multiselect" id="requirementsMultiselect">
+                  <button type="button" class="multiselect-toggle" onclick="toggleRequirementsDropdown()">
+                    <span id="requirementsSummary">Не выбрано</span>
+                    <span class="ms-caret">▾</span>
+                  </button>
+                  <div class="multiselect-panel" id="requirementsPanel">
+                    <div id="requirementsCheckboxBox">
+                      {% for req in requirements_list %}
+                      <label class="checkbox-item">
+                        <input type="checkbox" name="requirement_ids" value="{{ req.id }}" onchange="updateRequirementsSummary()" />
+                        {{ req.code }}{% if req.description %} — {{ req.description }}{% endif %}
+                      </label>
+                      {% else %}
+                      <span class="no-comments">Потребности еще не добавлялись</span>
+                      {% endfor %}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:16px;">
+              <button type="submit" class="btn btn-accent">Сохранить сервер в БД</button>
+            </div>
+          </form>
+          </div>
+        </div>
+      </div>
+
+      
+      <div class="modal-overlay" id="groupModal">
+        <div class="modal" style="max-width:920px;">
+          <div class="modal-head">
+            <h3>Потребности и информационные системы</h3>
+            <button onclick="closeGroupModal()">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="group-tabs">
+              <button type="button" class="tab-btn active" onclick="switchGroupTab(this, 'requirement')">Потребности</button>
+              <button type="button" class="tab-btn" onclick="switchGroupTab(this, 'is')">Информационные системы</button>
+            </div>
+
+            <div class="group-layout">
+              <div class="group-list-col">
+                <div id="reqTabList" class="group-list">
+                  {% for req in requirements_list %}
+                  <div class="group-item" onclick="selectGroupItem(this, 'requirement', {{ req.id }}, '{{ req.code|replace("'", "\\'") }}')">
+                    <span>{{ req.code }}{% if req.description %} — {{ req.description }}{% endif %}</span>
+                    <a class="remove" href="/ref/delete/requirements/{{ req.id }}" onclick="event.stopPropagation(); return confirm('Удалить потребность «{{ req.code }}»? Связи с серверами тоже удалятся.');">&times;</a>
+                  </div>
+                  {% else %}<div class="no-comments">Потребности не добавлены</div>{% endfor %}
+                </div>
+                <div id="isTabList" class="group-list" style="display:none;">
+                  {% for isys in is_list %}
+                  <div class="group-item" onclick="selectGroupItem(this, 'is', {{ isys.id }}, '{{ isys.name|replace("'", "\\'") }}')">
+                    <span>{{ isys.code }} — {{ isys.name }}</span>
+                    <a class="remove" href="/ref/delete/information_systems/{{ isys.id }}" onclick="event.stopPropagation(); return confirm('Удалить ИС «{{ isys.name }}»?');">&times;</a>
+                  </div>
+                  {% else %}<div class="no-comments">ИС не добавлены</div>{% endfor %}
+                </div>
+              </div>
+
+              <div class="group-detail-col">
+                <h4 id="groupDetailTitle">Выберите потребность или ИС слева</h4>
+                <div class="group-hint" id="groupHint"></div>
+
+                <div id="groupSecondaryBlock" style="display:none; margin-bottom:18px;">
+                  <h5 id="groupSecondaryTitle" style="margin:0 0 6px; font-size:12.5px; font-weight:bold;"></h5>
+                  <div id="groupSecondaryList" class="group-server-list">
+                    <div class="no-comments">Загрузка...</div>
+                  </div>
+                  <div class="group-add-row" id="groupSecondaryAddRow" style="display:none;">
+                    <select id="groupSecondaryAvailable"></select>
+                    <button class="btn btn-primary btn-sm" type="button" onclick="attachSecondaryToGroup()">Привязать</button>
+                  </div>
+                </div>
+
+                <h5 id="groupPrimaryTitle" style="margin:0 0 6px; font-size:12.5px; font-weight:bold;">Сервера</h5>
+                <div id="groupServerList" class="group-server-list">
+                  <div class="no-comments">Ничего не выбрано</div>
+                </div>
+                <div class="group-add-row" id="groupAddRow" style="display:none;">
+                  <select id="groupAvailableServers"></select>
+                  <button class="btn btn-primary btn-sm" type="button" onclick="attachServerToGroup()">Привязать</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Управление справочниками -->
+      <div class="modal-overlay" id="refModal">
+        <div class="modal" style="max-width:820px;">
+          <div class="modal-head">
+            <h3>Управление справочниками</h3>
+            <button onclick="closeRefModal()">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="ref-grid">
+              <div class="ref-box">
+                <h4>Операционные системы</h4>
+                <ul class="ref-list">
+                  {% for os in os_list %}
+                  <li><span>{{ os.name }}</span>
+                    <a class="remove" href="/ref/delete/operating_systems/{{ os.id }}" onclick="return confirm('Удалить «{{ os.name }}»?');">&times;</a>
+                  </li>
+                  {% else %}<li class="no-comments">Пусто</li>{% endfor %}
+                </ul>
+                <form class="ref-add-form" action="/ref/add/operating_systems" method="POST">
+                  <input type="text" name="name" placeholder="Новая ОС" required />
+                  <button class="btn btn-primary btn-sm" type="submit">+</button>
+                </form>
+              </div>
+
+              <div class="ref-box">
+                <h4>Среды</h4>
+                <ul class="ref-list">
+                  {% for env in env_list %}
+                  <li><span>{{ env.name }}</span>
+                    <a class="remove" href="/ref/delete/environments/{{ env.id }}" onclick="return confirm('Удалить «{{ env.name }}»?');">&times;</a>
+                  </li>
+                  {% else %}<li class="no-comments">Пусто</li>{% endfor %}
+                </ul>
+                <form class="ref-add-form" action="/ref/add/environments" method="POST">
+                  <input type="text" name="name" placeholder="Новая среда" required />
+                  <button class="btn btn-primary btn-sm" type="submit">+</button>
+                </form>
+              </div>
+
+              <div class="ref-box">
+                <h4>Роли серверов</h4>
+                <ul class="ref-list">
+                  {% for role in role_list %}
+                  <li><span>{{ role.name }}</span>
+                    <a class="remove" href="/ref/delete/server_roles/{{ role.id }}" onclick="return confirm('Удалить «{{ role.name }}»?');">&times;</a>
+                  </li>
+                  {% else %}<li class="no-comments">Пусто</li>{% endfor %}
+                </ul>
+                <form class="ref-add-form" action="/ref/add/server_roles" method="POST">
+                  <input type="text" name="name" placeholder="Новая роль" required />
+                  <button class="btn btn-primary btn-sm" type="submit">+</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ИИ-помощник -->
+      <div class="modal-overlay" id="aiModal">
+        <div class="modal" style="max-width:720px;">
+          <div class="modal-head">
+            <h3>ИИ-помощник — анализ серверов</h3>
+            <button onclick="closeAiModal()">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div id="aiSummary" style="display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap;"></div>
+
+            <div style="margin-bottom:16px;">
+              <button type="button" class="btn btn-primary btn-sm" onclick="askAiForAdvice()">Получить рекомендации</button>
+              <div class="group-hint" style="margin-top:6px;"></div>
+              <div id="aiAdviceBox" style="display:none; margin-top:10px; background:var(--surface-alt); border:1px solid var(--border); border-radius:8px; padding:12px 14px; font-size:13.5px; line-height:1.6;"></div>
+            </div>
+
+            <div id="aiFindingsList"><div class="no-comments">Анализирую сервера...</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Панель команд -->
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <button type="button" class="btn btn-accent btn-sm" onclick="openAddServerModal()">Добавить сервер</button>
+          <span class="tb-sep"></span>
+          <button type="button" class="btn btn-sm" onclick="openGroupModal()">Потребности и ИС</button>
+          <button type="button" class="btn btn-sm" onclick="openRefModal()">Справочники</button>
+          <a href="/archive/page" class="btn btn-sm">Архив</a>
+          <button type="button" class="btn btn-sm" onclick="openAiModal()">ИИ-помощник <span class="count zero" id="aiBadge" style="display:none;"></span></button>
+        </div>
+      </div>
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <div class="search-box">
+            <input type="text" id="tableSearch" placeholder="Поиск по имени, IP, ИС, потребности..." oninput="filterTable()" />
+          </div>
+          <button type="button" class="btn btn-sm" onclick="openCommentSearch()">Поиск по комментариям</button>
+        </div>
+      </div>
+
+      <div class="workspace">
+        <aside class="sidebar">
+          <div class="sidebar-head">Режим просмотра</div>
+          <button type="button" class="tab-btn active view-toggle-btn" onclick="setTableView('flat', this)">Обычный вид</button>
+          <button type="button" class="tab-btn view-toggle-btn" onclick="setTableView('requirement', this)">По потребностям</button>
+          <button type="button" class="tab-btn view-toggle-btn" onclick="setTableView('is', this)">По ИС</button>
+
+          <div class="sidebar-head" style="margin-top:8px; border-top:1px solid var(--line);">Столбцы таблицы</div>
+          <div id="columnsPanel" class="sidebar-columns">
+            <label class="checkbox-item"><input type="checkbox" checked data-col-toggle="name" onchange="toggleColumn('name', this.checked)"> Имя</label>
+            <label class="checkbox-item"><input type="checkbox" checked data-col-toggle="ip" onchange="toggleColumn('ip', this.checked)"> IP</label>
+            <label class="checkbox-item"><input type="checkbox" checked data-col-toggle="launch_year" onchange="toggleColumn('launch_year', this.checked)"> Год запуска</label>
+            <label class="checkbox-item"><input type="checkbox" checked data-col-toggle="specs" onchange="toggleColumn('specs', this.checked)"> Характеристики</label>
+            <label class="checkbox-item"><input type="checkbox" checked data-col-toggle="requirements" onchange="toggleColumn('requirements', this.checked)"> Потребности</label>
+            <label class="checkbox-item"><input type="checkbox" checked data-col-toggle="is" onchange="toggleColumn('is', this.checked)"> ИС</label>
+            <label class="checkbox-item"><input type="checkbox" checked data-col-toggle="role" onchange="toggleColumn('role', this.checked)"> Роль / ОС / Среда</label>
+            <label class="checkbox-item"><input type="checkbox" checked data-col-toggle="comments" onchange="toggleColumn('comments', this.checked)"> Комментарии</label>
+            <label class="checkbox-item"><input type="checkbox" checked data-col-toggle="docs" onchange="toggleColumn('docs', this.checked)"> Документы</label>
+            <label class="checkbox-item"><input type="checkbox" checked data-col-toggle="history" onchange="toggleColumn('history', this.checked)"> История</label>
+            <label class="checkbox-item"><input type="checkbox" checked data-col-toggle="actions" onchange="toggleColumn('actions', this.checked)"> Действие</label>
+          </div>
+        </aside>
+        <main class="content">
+        <div class="table-wrap" id="flatTableWrap">
+          <table id="serverTable">
+            <thead>
+              <tr>
+                {% macro sort_link(field, label) %}
+                  {% set next_order = 'asc' if (current_sort != field or current_order == 'desc') else 'desc' %}
+                  <a href="{{ url_for('index', sort=field, order=next_order) }}">
+                    {{ label }}
+                    {% if current_sort == field %}{{ '▲' if current_order == 'asc' else '▼' }}{% else %}⇅{% endif %}
+                  </a>
+                {% endmacro %}
+                <th data-col="name" class="{{ 'active' if current_sort == 'name' }}">{{ sort_link('name', 'Имя') }}</th>
+                <th data-col="ip" class="{{ 'active' if current_sort == 'ip' }}">{{ sort_link('ip', 'IP') }}</th>
+                <th data-col="launch_year" class="{{ 'active' if current_sort == 'launch_year' }}">{{ sort_link('launch_year', 'Год запуска') }}</th>
+                <th data-col="specs">Характеристики (CPU/RAM/Disk)</th>
+                <th data-col="requirements" class="{{ 'active' if current_sort == 'requirement' }}">{{ sort_link('requirement', 'Потребности') }}</th>
+                <th data-col="is" class="{{ 'active' if current_sort == 'is_name' }}">{{ sort_link('is_name', 'ИС') }}</th>
+                <th data-col="role">Роль / ОС / Среда</th>
+                <th data-col="comments">Комментарии</th>
+                <th data-col="docs">Документы</th>
+                <th data-col="history">История</th>
+                <th data-col="actions">Действие</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in servers %}
+              <tr data-search="{{ (s.server_name ~ ' ' ~ s.ip_address ~ ' ' ~ (s.is_name or '') ~ ' ' ~ (s.requirement_codes or '')) | lower }}">
+                <td data-col="name"><strong>{{ s.server_name }}</strong></td>
+                <td data-col="ip"><code class="ip">{{ s.ip_address }}</code></td>
+                <td data-col="launch_year">{{ s.launch_year or '-' }}</td>
+                <td data-col="specs">
+                  <span class="badge grey">{{ s.cpu_cores }} CPU · {{ s.ram_gb }} GB RAM · {{ s.disk_gb }} GB Disk</span>
+                </td>
+                <td data-col="requirements">
+                  {% if s.requirement_codes %}
+                    <span class="badge amber">{{ s.requirement_codes }}</span>
+                  {% else %}
+                    <span style="color:var(--text-muted); font-size:12.5px;">не указаны</span>
+                  {% endif %}
+                </td>
+                <td data-col="is">
+                  {% if s.is_id %}
+                  <button class="link-btn" onclick="openIsView({{ s.is_id }}, '{{ s.is_name|replace("'", "\\'") }}')">{{ s.is_name }}</button>
+                  {% else %}-{% endif %}
+                </td>
+                <td data-col="role">{{ s.role_name or '-' }} / {{ s.os_name or '-' }} / {{ s.env_name or '-' }}</td>
+                <td data-col="comments">
+                  <button class="comment-btn" onclick="openComments({{ s.id }}, '{{ s.server_name|replace("'", "\\'") }}')">
+                    Открыть <span class="count {{ 'zero' if s.comment_count == 0 }}">{{ s.comment_count }}</span>
+                  </button>
+                </td>
+                <td data-col="docs">
+                  <button class="comment-btn" onclick="openDocs({{ s.id }}, '{{ s.server_name|replace("'", "\\'") }}')">
+                    Открыть <span class="count {{ 'zero' if s.attachment_count == 0 }}">{{ s.attachment_count }}</span>
+                  </button>
+                </td>
+                <td data-col="history">
+                  <button class="comment-btn" onclick="openHistory({{ s.id }}, '{{ s.server_name|replace("'", "\\'") }}')">
+                    Открыть <span class="count {{ 'zero' if s.history_count == 0 }}">{{ s.history_count }}</span>
+                  </button>
+                </td>
+                <td data-col="actions" class="row-actions">
+                  <button class="btn btn-sm" onclick="openEditModal({{ s.id }})">Изменить</button>
+                  <a href="/delete/{{ s.id }}" class="btn btn-danger btn-sm" onclick="return confirm('Перенести сервер в архив? Его можно будет восстановить.');">В архив</a>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="11" style="text-align:center; padding:30px; color:var(--text-muted);">Серверы еще не добавлены</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="table-wrap" id="groupedTableWrap" style="display:none; padding:8px;"></div>
+        </main>
+      </div>
+      <div class="statusbar">
+        <span>Готово</span>
+        <button type="button" class="bg-toggle-link" id="bgToggleBtn" onclick="toggleBgTexture()">Фон: обычный</button>
+      </div>
+    </div>
+
+    <!-- Модальное окно комментариев конкретного сервера -->
+    <div class="modal-overlay" id="commentModal">
+      <div class="modal">
+        <div class="modal-head">
+          <h3 id="commentModalTitle">Комментарии</h3>
+          <button onclick="closeComments()">&times;</button>
+        </div>
+        <div class="modal-body" id="commentList">
+          <div class="no-comments">Загрузка...</div>
+        </div>
+        <div class="modal-footer">
+          <div class="row">
+            <input type="text" id="commentAuthor" placeholder="Ваше имя" />
+          </div>
+          <textarea id="commentText" placeholder="Оставить комментарий по этому серверу..." style="margin-top:8px;"></textarea>
+          <button class="btn btn-primary" onclick="submitComment()">Отправить</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Документы, прикреплённые к серверу -->
+    <div class="modal-overlay" id="docsModal">
+      <div class="modal">
+        <div class="modal-head">
+          <h3 id="docsModalTitle">Документы</h3>
+          <button onclick="closeDocs()">&times;</button>
+        </div>
+        <div class="modal-body" id="docsList">
+          <div class="no-comments">Загрузка...</div>
+        </div>
+        <div class="modal-footer">
+          <div class="row">
+            <input type="file" id="docFileInput" style="flex:1;" />
+            <button class="btn btn-primary btn-sm" onclick="uploadDoc()">Прикрепить</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- История изменений сервера -->
+    <div class="modal-overlay" id="historyModal">
+      <div class="modal" style="max-width:620px;">
+        <div class="modal-head">
+          <h3 id="historyModalTitle">История изменений</h3>
+          <button onclick="closeHistory()">&times;</button>
+        </div>
+        <div class="modal-body" id="historyList">
+          <div class="no-comments">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Поиск по всем комментариям -->
+    <div class="modal-overlay" id="commentSearchModal">
+      <div class="modal">
+        <div class="modal-head">
+          <h3>Поиск по комментариям</h3>
+          <button onclick="closeCommentSearch()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="text" id="commentSearchInput" placeholder="Текст, автор или имя сервера..." oninput="debouncedCommentSearch()" style="margin-bottom:12px;" />
+          <div id="commentSearchResults"><div class="no-comments">Введите текст для поиска</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="isViewModal">
+      <div class="modal">
+        <div class="modal-head">
+          <h3 id="isViewTitle">Серверы</h3>
+          <button onclick="closeIsView()">&times;</button>
+        </div>
+        <div class="modal-body" id="isViewList">
+          <div class="no-comments">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Редактирование сервера -->
+    <div class="modal-overlay" id="editModal">
+      <div class="modal">
+        <div class="modal-head">
+          <h3>Редактировать сервер</h3>
+          <button onclick="closeEditModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <form id="editServerForm" method="POST">
+            <div class="form-grid cols-2">
+              <div class="field"><label>Имя сервера</label><input type="text" name="name" id="edit_name" required /></div>
+              <div class="field"><label>IP-адрес</label><input type="text" name="ip_address" id="edit_ip" required /></div>
+              <div class="field"><label>vCPU</label><input type="number" name="cpu_cores" id="edit_cpu" /></div>
+              <div class="field"><label>RAM (ГБ)</label><input type="number" name="ram_gb" id="edit_ram" /></div>
+              <div class="field"><label>Диск (ГБ)</label><input type="number" name="disk_gb" id="edit_disk" /></div>
+              <div class="field"><label>Версия СУБД</label><input type="text" name="dbms_version" id="edit_dbms" /></div>
+              <div class="field"><label>Год запуска</label><input type="number" name="launch_year" id="edit_launch_year" /></div>
+              <div class="field">
+                <label>ОС</label>
+                <select name="os_id" id="edit_os_id">
+                  <option value="">-- выберите --</option>
+                  {% for os in os_list %}<option value="{{ os.id }}">{{ os.name }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="field">
+                <label>Среда</label>
+                <select name="env_id" id="edit_env_id">
+                  <option value="">-- выберите --</option>
+                  {% for env in env_list %}<option value="{{ env.id }}">{{ env.name }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="field">
+                <label>Роль</label>
+                <select name="role_id" id="edit_role_id">
+                  <option value="">-- выберите --</option>
+                  {% for role in role_list %}<option value="{{ role.id }}">{{ role.name }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="field">
+                <label>Информ. система</label>
+                <select name="is_id" id="edit_is_id">
+                  <option value="">-- выберите --</option>
+                  {% for isys in is_list %}<option value="{{ isys.id }}">{{ isys.name }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="field full">
+                <label>Потребности</label>
+                <div class="checkbox-box" id="editRequirementsBox">
+                  {% for req in requirements_list %}
+                  <label class="checkbox-item">
+                    <input type="checkbox" name="requirement_ids" value="{{ req.id }}" />
+                    {{ req.code }}{% if req.description %} — {{ req.description }}{% endif %}
+                  </label>
+                  {% else %}
+                  <span class="no-comments">Потребности еще не добавлялись</span>
+                  {% endfor %}
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:14px; text-align:right;">
+              <button type="button" class="btn btn-sm" onclick="closeEditModal()">Отмена</button>
+              <button type="submit" class="btn btn-primary btn-sm">Сохранить</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <script>
+
+      window.addEventListener('beforeunload', function () {
+        sessionStorage.setItem('scrollPos', window.scrollY);
+      });
+      window.addEventListener('DOMContentLoaded', function () {
+        const pos = sessionStorage.getItem('scrollPos');
+        if (pos !== null) {
+          window.scrollTo(0, parseInt(pos, 10));
+          sessionStorage.removeItem('scrollPos');
+        }
+      });
+
+      // --- Модалка добавления сервера ---
+      function openAddServerModal() {
+        document.getElementById('addServerModal').classList.add('open');
+      }
+      function closeAddServerModal() {
+        document.getElementById('addServerModal').classList.remove('open');
+      }
+
+      // --- Компактный выпадающий список потребностей ---
+      function toggleRequirementsDropdown() {
+        document.getElementById('requirementsPanel').classList.toggle('open');
+      }
+      function updateRequirementsSummary() {
+        const count = document.querySelectorAll('#requirementsCheckboxBox input:checked').length;
+        document.getElementById('requirementsSummary').innerText = count ? `Выбрано: ${count}` : 'Не выбрано';
+      }
+      document.addEventListener('click', function(e) {
+        const ms = document.getElementById('requirementsMultiselect');
+        if (ms && !ms.contains(e.target)) {
+          document.getElementById('requirementsPanel').classList.remove('open');
+        }
+      });
+
+
+      function quickAddRequirement() {
+        const input = document.getElementById('new_requirement_input');
+        const code = input.value.trim();
+        if (!code) return;
+
+        const formData = new FormData();
+        formData.append('code', code);
+
+        fetch('/ref/add/requirements', {
+          method: 'POST',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+          body: formData
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.error) { alert(data.error); return; }
+            const box = document.getElementById('requirementsCheckboxBox');
+            const empty = box.querySelector('.no-comments');
+            if (empty) empty.remove();
+
+            const label = document.createElement('label');
+            label.className = 'checkbox-item';
+            label.innerHTML = `<input type="checkbox" name="requirement_ids" value="${data.id}" checked onchange="updateRequirementsSummary()"> ${escapeHtml(data.code)}${data.description ? ' — ' + escapeHtml(data.description) : ''}`;
+            box.appendChild(label);
+
+            input.value = '';
+            updateRequirementsSummary();
+          })
+          .catch(() => alert('Не удалось добавить потребность.'));
+      }
+
+      function applyBgTexture(enabled) {
+        document.body.classList.toggle('bg-texture', enabled);
+        const btn = document.getElementById('bgToggleBtn');
+        if (btn) btn.innerText = enabled ? 'Фон: тёмный' : 'Фон: обычный';
+      }
+      function toggleBgTexture() {
+        const enabled = !document.body.classList.contains('bg-texture');
+        applyBgTexture(enabled);
+        try { localStorage.setItem('bgTexture', enabled ? '1' : '0'); } catch (e) {}
+      }
+      (function initBgTexture() {
+        let saved = '0';
+        try { saved = localStorage.getItem('bgTexture') || '0'; } catch (e) {}
+        applyBgTexture(saved === '1');
+      })();
+
+      // --- Сворачивание панелей ---
+      function togglePanel(header) {
+        header.parentElement.classList.toggle('collapsed');
+      }
+
+      // --- Поиск по таблице ---
+      function filterTable() {
+        const q = document.getElementById('tableSearch').value.toLowerCase().trim();
+        document.querySelectorAll('#serverTable tbody tr[data-search]').forEach(row => {
+          row.classList.toggle('hidden-row', !row.dataset.search.includes(q));
+        });
+      }
+
+      function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.innerText = str == null ? '' : str;
+        return div.innerHTML;
+      }
+
+      function toggleColumn(col, visible) {
+        document.querySelectorAll('[data-col="' + col + '"]').forEach(el => {
+          el.style.display = visible ? '' : 'none';
+        });
+        saveColumnPrefs();
+      }
+      function saveColumnPrefs() {
+        const prefs = {};
+        document.querySelectorAll('#columnsPanel input[type=checkbox]').forEach(cb => {
+          prefs[cb.dataset.colToggle] = cb.checked;
+        });
+        try { localStorage.setItem('tableColumnPrefs', JSON.stringify(prefs)); } catch (e) {}
+      }
+      function loadColumnPrefs() {
+        let prefs = {};
+        try { prefs = JSON.parse(localStorage.getItem('tableColumnPrefs') || '{}'); } catch (e) {}
+        document.querySelectorAll('#columnsPanel input[type=checkbox]').forEach(cb => {
+          const col = cb.dataset.colToggle;
+          if (Object.prototype.hasOwnProperty.call(prefs, col)) {
+            cb.checked = prefs[col];
+            document.querySelectorAll('[data-col="' + col + '"]').forEach(el => {
+              el.style.display = cb.checked ? '' : 'none';
+            });
+          }
+        });
+      }
+      loadColumnPrefs();
+
+      // --- Группировка таблицы по потребностям / ИС ---
+      const GROUP_COLORS = ['#f4b6b0', '#a9cdf0', '#b0e3cb', '#f3dc9a', '#cdbcf2', '#f2bdd6', '#b3c0f2', '#a8ddc9'];
+
+      function setTableView(mode, btn) {
+        document.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const flatWrap = document.getElementById('flatTableWrap');
+        const groupedWrap = document.getElementById('groupedTableWrap');
+        if (mode === 'flat') {
+          flatWrap.style.display = 'block';
+          groupedWrap.style.display = 'none';
+        } else {
+          flatWrap.style.display = 'none';
+          groupedWrap.style.display = 'block';
+          loadGroupedTable(mode);
+        }
+      }
+
+      function loadGroupedTable(mode) {
+        const wrap = document.getElementById('groupedTableWrap');
+        wrap.innerHTML = '<div class="no-comments">Загрузка...</div>';
+        fetch('/servers/grouped?by=' + mode)
+          .then(r => r.json())
+          .then(rows => renderGroupedTable(rows, mode))
+          .catch(() => { wrap.innerHTML = '<div class="no-comments">Ошибка загрузки.</div>'; });
+      }
+
+      function renderGroupedTable(rows, mode) {
+        if (mode === 'requirement') {
+          renderThreeLevelGroupedTable(rows);
+        } else {
+          renderTwoLevelGroupedTable(rows);
+        }
+      }
+
+      function renderTwoLevelGroupedTable(rows) {
+        const wrap = document.getElementById('groupedTableWrap');
+        if (!rows.length) { wrap.innerHTML = '<div class="no-comments">Нет данных</div>'; return; }
+
+        // Группируем идущие подряд строки с одинаковой меткой группы
+        const groups = [];
+        rows.forEach(row => {
+          const last = groups[groups.length - 1];
+          if (last && last.label === row.group_label) {
+            last.rows.push(row);
+          } else {
+            groups.push({ label: row.group_label, rows: [row] });
+          }
+        });
+
+        let html = `
+          <table class="grouped-table">
+            <thead>
+              <tr>
+                <th>Информационная система</th>
+                <th>Сервер</th>
+                <th>IP</th>
+                <th>Характеристики</th>
+                <th>Роль / ОС / Среда</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        groups.forEach((group, gi) => {
+          const color = GROUP_COLORS[gi % GROUP_COLORS.length];
+          group.rows.forEach((row, ri) => {
+            html += '<tr>';
+            if (ri === 0) {
+              html += `<td class="group-cell" style="--group-color:${color};" rowspan="${group.rows.length}">${escapeHtml(group.label)}</td>`;
+            }
+            if (row.id) {
+              html += `
+                <td><strong>${escapeHtml(row.server_name)}</strong></td>
+                <td><code class="ip">${escapeHtml(row.ip_address)}</code></td>
+                <td><span class="badge grey">${row.cpu_cores} CPU · ${row.ram_gb} GB RAM · ${row.disk_gb} GB Disk</span></td>
+                <td>${escapeHtml(row.role_name || '-')} / ${escapeHtml(row.os_name || '-')} / ${escapeHtml(row.env_name || '-')}</td>
+              `;
+            } else {
+              html += `<td colspan="4" style="color:var(--text-muted); font-style:italic;">нет серверов</td>`;
+            }
+            html += '</tr>';
+          });
+        });
+
+        html += '</tbody></table>';
+        wrap.innerHTML = html;
+      }
+
+      function renderThreeLevelGroupedTable(rows) {
+        const wrap = document.getElementById('groupedTableWrap');
+        if (!rows.length) { wrap.innerHTML = '<div class="no-comments">Нет данных</div>'; return; }
+
+        const groups = [];
+        rows.forEach(row => {
+          let g = groups[groups.length - 1];
+          if (!g || g.label !== row.group_label) {
+            g = { label: row.group_label, subgroups: [] };
+            groups.push(g);
+          }
+          let sg = g.subgroups[g.subgroups.length - 1];
+          if (!sg || sg.label !== row.subgroup_label) {
+            sg = { label: row.subgroup_label, rows: [] };
+            g.subgroups.push(sg);
+          }
+          sg.rows.push(row);
+        });
+
+        let html = `
+          <table class="grouped-table">
+            <thead>
+              <tr>
+                <th>Потребность</th>
+                <th>Информационная система</th>
+                <th>Сервер</th>
+                <th>IP</th>
+                <th>Характеристики</th>
+                <th>Роль / ОС / Среда</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        groups.forEach((group, gi) => {
+          const color = GROUP_COLORS[gi % GROUP_COLORS.length];
+          const groupRowCount = group.subgroups.reduce((sum, sg) => sum + sg.rows.length, 0);
+          let firstRowOfGroup = true;
+
+          group.subgroups.forEach(sg => {
+            sg.rows.forEach((row, ri) => {
+              html += '<tr>';
+              if (firstRowOfGroup) {
+                html += `<td class="group-cell" style="--group-color:${color};" rowspan="${groupRowCount}">${escapeHtml(group.label)}</td>`;
+                firstRowOfGroup = false;
+              }
+              if (ri === 0) {
+                html += `<td class="subgroup-cell" rowspan="${sg.rows.length}">${escapeHtml(sg.label)}</td>`;
+              }
+              if (row.id) {
+                html += `
+                  <td><strong>${escapeHtml(row.server_name)}</strong></td>
+                  <td><code class="ip">${escapeHtml(row.ip_address)}</code></td>
+                  <td><span class="badge grey">${row.cpu_cores} CPU · ${row.ram_gb} GB RAM · ${row.disk_gb} GB Disk</span></td>
+                  <td>${escapeHtml(row.role_name || '-')} / ${escapeHtml(row.os_name || '-')} / ${escapeHtml(row.env_name || '-')}</td>
+                `;
+              } else {
+                html += `<td colspan="4" style="color:var(--text-muted); font-style:italic;">нет серверов</td>`;
+              }
+              html += '</tr>';
+            });
+          });
+        });
+
+        html += '</tbody></table>';
+        wrap.innerHTML = html;
+      }
+
+      // --- Комментарии конкретного сервера ---
+      let currentServerId = null;
+
+      function openComments(serverId, serverName) {
+        currentServerId = serverId;
+        document.getElementById('commentModalTitle').innerText = 'Комментарии: ' + serverName;
+        document.getElementById('commentModal').classList.add('open');
+        loadComments(serverId);
+      }
+      function closeComments() {
+        document.getElementById('commentModal').classList.remove('open');
+        currentServerId = null;
+      }
+      function loadComments(serverId) {
+        const listEl = document.getElementById('commentList');
+        listEl.innerHTML = '<div class="no-comments">Загрузка...</div>';
+        fetch('/server/' + serverId + '/comments')
+          .then(r => r.json())
+          .then(comments => {
+            if (!comments.length) { listEl.innerHTML = '<div class="no-comments">Пока нет комментариев</div>'; return; }
+            listEl.innerHTML = comments.map(c => `
+              <div class="comment-item" data-id="${c.id}">
+                <div class="meta">
+                  <span><strong>${escapeHtml(c.author)}</strong> · ${c.created_at}</span>
+                  <button class="del-comment" onclick="deleteComment(${c.id})">Удалить</button>
+                </div>
+                <p>${escapeHtml(c.comment_text)}</p>
+              </div>
+            `).join('');
+          })
+          .catch(() => { listEl.innerHTML = '<div class="no-comments">Ошибка загрузки</div>'; });
+      }
+      function submitComment() {
+        if (!currentServerId) return;
+        const author = document.getElementById('commentAuthor').value.trim() || 'Аноним';
+        const text = document.getElementById('commentText').value.trim();
+        if (!text) return;
+        const formData = new FormData();
+        formData.append('author', author);
+        formData.append('comment_text', text);
+        fetch('/comment/add/' + currentServerId, {
+          method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: formData
+        }).then(r => r.json()).then(() => {
+          document.getElementById('commentText').value = '';
+          loadComments(currentServerId);
+        });
+      }
+      function deleteComment(commentId) {
+        if (!confirm('Удалить комментарий?')) return;
+        fetch('/comment/delete/' + commentId, {
+          method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        }).then(r => r.json()).then(() => loadComments(currentServerId));
+      }
+
+      // --- Документы, прикреплённые к серверу ---
+      let currentDocsServerId = null;
+      function openDocs(serverId, serverName) {
+        currentDocsServerId = serverId;
+        document.getElementById('docsModalTitle').innerText = 'Документы: ' + serverName;
+        document.getElementById('docsModal').classList.add('open');
+        loadDocs(serverId);
+      }
+      function closeDocs() {
+        document.getElementById('docsModal').classList.remove('open');
+        currentDocsServerId = null;
+      }
+      function loadDocs(serverId) {
+        const listEl = document.getElementById('docsList');
+        listEl.innerHTML = '<div class="no-comments">Загрузка...</div>';
+        fetch('/server/' + serverId + '/attachments')
+          .then(r => r.json())
+          .then(docs => {
+            if (!docs.length) { listEl.innerHTML = '<div class="no-comments">Файлы не прикреплены</div>'; return; }
+            listEl.innerHTML = docs.map(d => `
+              <div class="comment-item">
+                <div class="meta">
+                  <span><strong>${escapeHtml(d.original_name)}</strong> · ${d.uploaded_at}</span>
+                  <button class="del-comment" onclick="detachDoc(${d.id})">Открепить</button>
+                </div>
+                <button class="link-btn" onclick="openDocFile(${d.id})">Открыть</button>
+              </div>
+            `).join('');
+          })
+          .catch(() => { listEl.innerHTML = '<div class="no-comments">Ошибка загрузки. Выполнена ли миграция вложений?</div>'; });
+      }
+      function uploadDoc() {
+        if (!currentDocsServerId) return;
+        const input = document.getElementById('docFileInput');
+        if (!input.files.length) return;
+        const formData = new FormData();
+        formData.append('file', input.files[0]);
+        fetch('/server/' + currentDocsServerId + '/attachments/upload', {
+          method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: formData
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.error) { alert(data.error); return; }
+            input.value = '';
+            loadDocs(currentDocsServerId);
+          })
+          .catch(() => alert('Не удалось загрузить файл.'));
+      }
+      function openDocFile(docId) {
+        fetch('/attachments/' + docId + '/open')
+          .then(r => r.json())
+          .then(data => { if (data.error) alert(data.error); })
+          .catch(() => alert('Не удалось открыть файл.'));
+      }
+      function detachDoc(docId) {
+        if (!confirm('Открепить документ от сервера?')) return;
+        fetch('/attachments/' + docId + '/delete', {
+          method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        }).then(() => loadDocs(currentDocsServerId));
+      }
+
+      // --- История изменений сервера ---
+      function openHistory(serverId, serverName) {
+        document.getElementById('historyModalTitle').innerText = 'История изменений: ' + serverName;
+        document.getElementById('historyModal').classList.add('open');
+        loadHistory(serverId);
+      }
+      function closeHistory() {
+        document.getElementById('historyModal').classList.remove('open');
+      }
+      function loadHistory(serverId) {
+        const listEl = document.getElementById('historyList');
+        listEl.innerHTML = '<div class="no-comments">Загрузка...</div>';
+        fetch('/server/' + serverId + '/history')
+          .then(r => r.json())
+          .then(versions => {
+            if (!versions.length) {
+              listEl.innerHTML = '<div class="no-comments">Сервер ещё не редактировался — истории изменений пока нет</div>';
+              return;
+            }
+            listEl.innerHTML = versions.map((v, i) => `
+              <div class="comment-item">
+                <div class="meta">
+                  <span>${i === versions.length - 1 ? 'Изначальная версия' : 'Версия'} · ${v.changed_at}</span>
+                </div>
+                <p style="line-height:1.7;">
+                  <strong>${escapeHtml(v.name)}</strong> · <code class="ip">${escapeHtml(v.ip_address)}</code><br>
+                  ${v.cpu_cores} CPU · ${v.ram_gb} GB RAM · ${v.disk_gb} GB Disk${v.dbms_version ? ' · СУБД ' + escapeHtml(v.dbms_version) : ''}${v.launch_year ? ' · запуск ' + v.launch_year : ''}<br>
+                  ${escapeHtml(v.role_name || '-')} / ${escapeHtml(v.os_name || '-')} / ${escapeHtml(v.env_name || '-')}<br>
+                  ИС: ${escapeHtml(v.is_name || '-')} · Потребности: ${escapeHtml(v.requirement_codes || '-')}
+                </p>
+              </div>
+            `).join('');
+          })
+          .catch(() => { listEl.innerHTML = '<div class="no-comments">Ошибка загрузки. Выполнена ли миграция истории?</div>'; });
+      }
+
+      // --- Глобальный поиск по комментариям ---
+      let commentSearchTimer = null;
+      function openCommentSearch() {
+        document.getElementById('commentSearchModal').classList.add('open');
+        document.getElementById('commentSearchInput').value = '';
+        document.getElementById('commentSearchResults').innerHTML = '<div class="no-comments">Введите текст для поиска</div>';
+        document.getElementById('commentSearchInput').focus();
+      }
+      function closeCommentSearch() {
+        document.getElementById('commentSearchModal').classList.remove('open');
+      }
+      function debouncedCommentSearch() {
+        clearTimeout(commentSearchTimer);
+        commentSearchTimer = setTimeout(runCommentSearch, 300);
+      }
+      function runCommentSearch() {
+        const q = document.getElementById('commentSearchInput').value.trim();
+        const resultsEl = document.getElementById('commentSearchResults');
+        if (!q) { resultsEl.innerHTML = '<div class="no-comments">Введите текст для поиска</div>'; return; }
+        resultsEl.innerHTML = '<div class="no-comments">Поиск...</div>';
+        fetch('/comments/search?q=' + encodeURIComponent(q))
+          .then(r => r.json())
+          .then(results => {
+            if (!results.length) { resultsEl.innerHTML = '<div class="no-comments">Ничего не найдено</div>'; return; }
+            resultsEl.innerHTML = results.map(c => `
+              <div class="comment-item" style="cursor:pointer;" onclick="closeCommentSearch(); openComments(${c.server_id}, '${escapeHtml(c.server_name).replace(/'/g, "\\'")}');">
+                <div class="meta"><span><strong>${escapeHtml(c.server_name)}</strong> · ${escapeHtml(c.author)} · ${c.created_at}</span></div>
+                <p>${escapeHtml(c.comment_text)}</p>
+              </div>
+            `).join('');
+          });
+      }
+
+      // --- Просмотр серверов по ИС
+      function openIsView(isId, isName) {
+        document.getElementById('isViewTitle').innerText = 'Серверы в ИС: ' + isName;
+        document.getElementById('isViewModal').classList.add('open');
+        const listEl = document.getElementById('isViewList');
+        listEl.innerHTML = '<div class="no-comments">Загрузка...</div>';
+        fetch('/is/' + isId + '/servers')
+          .then(r => r.json())
+          .then(data => {
+            const linked = data.linked || [];
+            if (!linked.length) { listEl.innerHTML = '<div class="no-comments">Нет серверов</div>'; return; }
+            listEl.innerHTML = linked.map(s => `
+              <div class="comment-item"><p><strong>${escapeHtml(s.name)}</strong> — <code class="ip">${escapeHtml(s.ip_address)}</code></p></div>
+            `).join('');
+          });
+      }
+      function closeIsView() { document.getElementById('isViewModal').classList.remove('open'); }
+
+      // --- Модалки "Потребности и ИС" / "Справочники" ---
+      function openGroupModal() { document.getElementById('groupModal').classList.add('open'); }
+      function closeGroupModal() { document.getElementById('groupModal').classList.remove('open'); }
+      function openRefModal() { document.getElementById('refModal').classList.add('open'); }
+      function closeRefModal() { document.getElementById('refModal').classList.remove('open'); }
+
+      // --- ИИ-помощник: анализ серверов ---
+      const AI_SEVERITY_META = {
+        critical: { label: 'Критично', color: '#ec6b68', bg: 'rgba(236,107,104,0.16)', icon: '' },
+        warning:  { label: 'Внимание', color: '#c98a1f', bg: 'rgba(232,180,88,0.2)',  icon: '' },
+        info:     { label: 'Инфо',     color: '#4f5fe0', bg: 'rgba(108,126,240,0.15)', icon: '' }
+      };
+
+      function openAiModal() {
+        document.getElementById('aiModal').classList.add('open');
+        loadAiAnalysis();
+      }
+      function closeAiModal() {
+        document.getElementById('aiModal').classList.remove('open');
+      }
+
+      function loadAiAnalysis() {
+        const listEl = document.getElementById('aiFindingsList');
+        const summaryEl = document.getElementById('aiSummary');
+        listEl.innerHTML = '<div class="no-comments">Анализирую сервера...</div>';
+        summaryEl.innerHTML = '';
+        fetch('/ai/analyze')
+          .then(r => r.json())
+          .then(data => {
+            updateAiBadge(data.summary);
+            summaryEl.innerHTML = Object.entries(AI_SEVERITY_META).map(([key, meta]) =>
+              `<span class="badge" style="background:${meta.bg}; color:${meta.color};">${meta.icon} ${meta.label}: ${data.summary[key] || 0}</span>`
+            ).join('');
+
+            if (!data.findings.length) {
+              listEl.innerHTML = '<div class="no-comments">Проблем не найдено — всё в порядке</div>';
+              return;
+            }
+            listEl.innerHTML = data.findings.map(f => {
+              const meta = AI_SEVERITY_META[f.severity] || AI_SEVERITY_META.info;
+              return `
+                <div class="comment-item" style="cursor:pointer; border-left:3px solid ${meta.color}; padding-left:10px;" onclick="closeAiModal(); openEditModal(${f.server_id});">
+                  <div class="meta"><span>${meta.icon} <strong>${escapeHtml(f.server_name)}</strong></span></div>
+                  <p>${escapeHtml(f.message)}</p>
+                </div>
+              `;
+            }).join('');
+          })
+          .catch(() => { listEl.innerHTML = '<div class="no-comments">Не удалось выполнить анализ.</div>'; });
+      }
+
+      function updateAiBadge(summary) {
+        const badge = document.getElementById('aiBadge');
+        const total = (summary.critical || 0) + (summary.warning || 0);
+        if (total > 0) {
+          badge.style.display = 'inline-flex';
+          badge.innerText = total;
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+
+      fetch('/ai/analyze').then(r => r.json()).then(data => updateAiBadge(data.summary)).catch(() => {});
+
+      function askAiForAdvice() {
+        const box = document.getElementById('aiAdviceBox');
+        box.style.display = 'block';
+        box.innerHTML = '<span style="color:var(--text-muted);">Модель думает... на обычном ПК это может занять 10–40 секунд.</span>';
+        fetch('/ai/explain')
+          .then(r => r.json().then(data => ({ ok: r.ok, data })))
+          .then(({ ok, data }) => {
+            if (!ok || data.error) {
+              box.innerHTML = `<span style="color:var(--danger);">${escapeHtml(data.error || 'Ошибка запроса к ИИ.')}</span>`;
+              return;
+            }
+            box.innerHTML = escapeHtml(data.text).replace(/\n/g, '<br>');
+          })
+          .catch(() => {
+            box.innerHTML = '<span style="color:var(--danger);">Не удалось связаться с приложением. Проверьте, что оно запущено.</span>';
+          });
+      }
+
+      let currentGroupType = null;
+      let currentGroupId = null;
+
+      function switchGroupTab(btn, type) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('reqTabList').style.display = type === 'requirement' ? 'block' : 'none';
+        document.getElementById('isTabList').style.display = type === 'is' ? 'block' : 'none';
+        currentGroupType = null;
+        currentGroupId = null;
+        document.getElementById('groupDetailTitle').innerText = 'Выберите потребность или ИС слева';
+        document.getElementById('groupHint').innerText = '';
+        document.getElementById('groupSecondaryBlock').style.display = 'none';
+        document.getElementById('groupServerList').innerHTML = '<div class="no-comments">Ничего не выбрано</div>';
+        document.getElementById('groupAddRow').style.display = 'none';
+        document.getElementById('groupPrimaryTitle').innerText = 'Сервера';
+      }
+
+      function selectGroupItem(el, type, id, label) {
+        currentGroupType = type;
+        currentGroupId = id;
+        document.querySelectorAll('.group-item').forEach(x => x.classList.remove('selected'));
+        el.classList.add('selected');
+
+        if (type === 'requirement') {
+          document.getElementById('groupDetailTitle').innerText = 'Потребность: ' + label;
+          document.getElementById('groupHint').innerText = 'Сначала привяжите ИС, к которым относится потребность — тогда в группированном виде таблицы будут видны и их сервера.';
+          document.getElementById('groupSecondaryTitle').innerText = 'Связанные информационные системы';
+          document.getElementById('groupPrimaryTitle').innerText = 'Сервера с этой потребностью напрямую';
+        } else {
+          document.getElementById('groupDetailTitle').innerText = 'ИС: ' + label;
+          document.getElementById('groupHint').innerText = '';
+          document.getElementById('groupSecondaryTitle').innerText = 'Потребности этой ИС';
+          document.getElementById('groupPrimaryTitle').innerText = 'Сервера в этой ИС';
+        }
+
+        document.getElementById('groupSecondaryBlock').style.display = 'block';
+        loadSecondaryGroup();
+        loadGroupServers();
+      }
+
+      function loadSecondaryGroup() {
+        const listEl = document.getElementById('groupSecondaryList');
+        const selectEl = document.getElementById('groupSecondaryAvailable');
+        listEl.innerHTML = '<div class="no-comments">Загрузка...</div>';
+        const url = currentGroupType === 'requirement'
+          ? '/requirement/' + currentGroupId + '/is'
+          : '/is/' + currentGroupId + '/requirements';
+        fetch(url)
+          .then(r => r.json())
+          .then(data => {
+            const linked = data.linked || [];
+            if (!linked.length) {
+              listEl.innerHTML = '<div class="no-comments">Пока ничего не привязано</div>';
+            } else if (currentGroupType === 'requirement') {
+              listEl.innerHTML = linked.map(i => `
+                <div class="comment-item">
+                  <div class="meta">
+                    <span><strong>${escapeHtml(i.name)}</strong></span>
+                    <button class="del-comment" onclick="detachSecondaryFromGroup(${i.id})">Отвязать</button>
+                  </div>
+                </div>
+              `).join('');
+            } else {
+              listEl.innerHTML = linked.map(r => `
+                <div class="comment-item">
+                  <div class="meta">
+                    <span><strong>${escapeHtml(r.code)}</strong>${r.description ? ' — ' + escapeHtml(r.description) : ''}</span>
+                    <button class="del-comment" onclick="detachSecondaryFromGroup(${r.id})">Отвязать</button>
+                  </div>
+                </div>
+              `).join('');
+            }
+            const available = data.available || [];
+            selectEl.innerHTML = available.length
+              ? available.map(item => currentGroupType === 'requirement'
+                  ? `<option value="${item.id}">${escapeHtml(item.name)}</option>`
+                  : `<option value="${item.id}">${escapeHtml(item.code)}${item.description ? ' — ' + escapeHtml(item.description) : ''}</option>`
+                ).join('')
+              : '<option value="">Нет доступных</option>';
+            document.getElementById('groupSecondaryAddRow').style.display = 'flex';
+          });
+      }
+
+      function attachSecondaryToGroup() {
+        const value = document.getElementById('groupSecondaryAvailable').value;
+        if (!currentGroupId || !value) return;
+        const formData = new FormData();
+        let url;
+        if (currentGroupType === 'requirement') {
+          formData.append('is_id', value);
+          url = '/requirement/' + currentGroupId + '/is/add';
+        } else {
+          formData.append('requirement_id', value);
+          url = '/is/' + currentGroupId + '/requirements/add';
+        }
+        fetch(url, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: formData })
+          .then(() => loadSecondaryGroup());
+      }
+
+      function detachSecondaryFromGroup(itemId) {
+        if (!currentGroupId) return;
+        const url = currentGroupType === 'requirement'
+          ? '/requirement/' + currentGroupId + '/is/remove/' + itemId
+          : '/is/' + currentGroupId + '/requirements/remove/' + itemId;
+        fetch(url, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+          .then(() => loadSecondaryGroup());
+      }
+
+      // --- Основная связь: сервера ---
+      function loadGroupServers() {
+        const listEl = document.getElementById('groupServerList');
+        const selectEl = document.getElementById('groupAvailableServers');
+        listEl.innerHTML = '<div class="no-comments">Загрузка...</div>';
+        const url = currentGroupType === 'requirement'
+          ? '/requirement/' + currentGroupId + '/servers'
+          : '/is/' + currentGroupId + '/servers';
+        fetch(url)
+          .then(r => r.json())
+          .then(data => {
+            const linked = data.linked || [];
+            if (!linked.length) {
+              listEl.innerHTML = '<div class="no-comments">Пока нет привязанных серверов</div>';
+            } else {
+              listEl.innerHTML = linked.map(s => `
+                <div class="comment-item">
+                  <div class="meta">
+                    <span><strong>${escapeHtml(s.name)}</strong> · <code class="ip">${escapeHtml(s.ip_address)}</code></span>
+                    <button class="del-comment" onclick="detachServerFromGroup(${s.id})">Отвязать</button>
+                  </div>
+                </div>
+              `).join('');
+            }
+            const available = data.available || [];
+            selectEl.innerHTML = available.length
+              ? available.map(s => `<option value="${s.id}">${escapeHtml(s.name)} (${escapeHtml(s.ip_address)})</option>`).join('')
+              : '<option value="">Нет доступных серверов</option>';
+            document.getElementById('groupAddRow').style.display = 'flex';
+          });
+      }
+
+      function attachServerToGroup() {
+        const serverId = document.getElementById('groupAvailableServers').value;
+        if (!currentGroupId || !serverId) return;
+        const formData = new FormData();
+        formData.append('server_id', serverId);
+        const url = currentGroupType === 'requirement'
+          ? '/requirement/' + currentGroupId + '/servers/add'
+          : '/is/' + currentGroupId + '/servers/add';
+        fetch(url, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: formData })
+          .then(() => location.reload());
+      }
+
+      function detachServerFromGroup(serverId) {
+        if (!currentGroupId) return;
+        const url = currentGroupType === 'requirement'
+          ? '/requirement/' + currentGroupId + '/servers/remove/' + serverId
+          : '/is/' + currentGroupId + '/servers/remove/' + serverId;
+        fetch(url, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+          .then(() => location.reload());
+      }
+
+      // --- Редактирование сервера ---
+      function openEditModal(serverId) {
+        fetch('/server/' + serverId + '/edit')
+          .then(r => r.json())
+          .then(s => {
+            document.getElementById('editServerForm').action = '/server/' + serverId + '/edit';
+            document.getElementById('edit_name').value = s.name || '';
+            document.getElementById('edit_ip').value = s.ip_address || '';
+            document.getElementById('edit_cpu').value = s.cpu_cores || '';
+            document.getElementById('edit_ram').value = s.ram_gb || '';
+            document.getElementById('edit_disk').value = s.disk_gb || '';
+            document.getElementById('edit_dbms').value = s.dbms_version || '';
+            document.getElementById('edit_launch_year').value = s.launch_year || '';
+            setSelectValue('edit_os_id', s.os_id);
+            setSelectValue('edit_env_id', s.environment_id);
+            setSelectValue('edit_role_id', s.server_role_id);
+            setSelectValue('edit_is_id', s.is_id);
+
+            const assignedIds = (s.requirement_ids || []).map(String);
+            document.querySelectorAll('#editRequirementsBox input[type=checkbox]').forEach(cb => {
+              cb.checked = assignedIds.includes(cb.value);
+            });
+
+            document.getElementById('editModal').classList.add('open');
+          });
+      }
+      function setSelectValue(id, value) {
+        document.getElementById(id).value = value != null ? String(value) : '';
+      }
+      function closeEditModal() {
+        document.getElementById('editModal').classList.remove('open');
+      }
+
+      ['commentModal', 'commentSearchModal', 'isViewModal', 'editModal', 'groupModal', 'refModal', 'aiModal', 'docsModal', 'addServerModal', 'historyModal'].forEach(id => {
+        document.getElementById(id).addEventListener('click', function(e) {
+          if (e.target === this) this.classList.remove('open');
+        });
+      });
+    </script>
+  </body>
+</html>
